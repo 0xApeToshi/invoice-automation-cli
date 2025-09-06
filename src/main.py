@@ -18,6 +18,7 @@ from rich.traceback import install
 from .commands.fetch import fetch_command
 from .commands.status import status_command
 from .commands.tokens import tokens_command
+from .commands.upload import upload_command
 
 # Install rich traceback handler for better error display
 install(show_locals=True)
@@ -27,7 +28,7 @@ console = Console()
 # Create the main Typer application
 app = typer.Typer(
     name="invoice-automation",
-    help="Automate invoice retrieval from Google Ads and Meta Ads",
+    help="Automate invoice retrieval and upload from Google Ads and Meta Ads",
     add_completion=False,
     rich_markup_mode="rich",
     context_settings={"help_option_names": ["-h", "--help"]},
@@ -37,6 +38,7 @@ app = typer.Typer(
 app.command("fetch", help="Fetch invoices from configured providers")(fetch_command)
 app.command("status", help="Check provider configuration and API connections")(status_command)
 app.command("generate-tokens", help="Generate OAuth2 tokens for API authentication")(tokens_command)
+app.command("upload", help="Upload invoice files to cloud storage providers")(upload_command)
 
 
 def version_callback(value: bool) -> None:
@@ -63,22 +65,25 @@ def main(
     ),
 ) -> None:
     """
-    Invoice Automation CLI - Automate invoice retrieval from advertising platforms.
+    Invoice Automation CLI - Automate invoice retrieval and upload from advertising platforms.
     
     This tool helps agencies and businesses automatically retrieve, download,
-    and organize invoices from Google Ads and Meta Ads (Facebook) accounts.
+    organize, and upload invoices from Google Ads and Meta Ads (Facebook) accounts.
     
     Features:
     • Retrieve invoices from Meta Ads and Google Ads APIs
     • Download invoice PDFs with automatic retry logic
+    • Upload invoices to Google Drive with configurable organization
     • Organize files using configurable folder structures
     • Handle multiple client accounts and providers
     • Comprehensive error handling and logging
     
     Getting Started:
     1. Copy .env.example to .env and configure your API credentials
-    2. Run 'invoice-automation status' to test your configuration
-    3. Run 'invoice-automation fetch' to retrieve invoices
+    2. Run 'invoice-automation generate-tokens' to get OAuth2 credentials
+    3. Run 'invoice-automation status' to test your configuration
+    4. Run 'invoice-automation fetch' to retrieve invoices
+    5. Run 'invoice-automation upload' to sync to Google Drive
     
     For detailed documentation and examples, visit:
     https://github.com/your-repo/invoice-automation
@@ -92,7 +97,7 @@ def setup(
         "both",
         "--provider",
         "-p",
-        help="Provider to set up: meta, google, or both",
+        help="Provider to set up: meta, google, google-drive, or both",
     ),
     interactive: bool = typer.Option(
         True,
@@ -104,10 +109,12 @@ def setup(
     Interactive setup wizard for configuring API credentials.
     
     This command guides you through the process of setting up API credentials
-    for Meta Ads and Google Ads, creating the necessary configuration files.
+    for Meta Ads, Google Ads, and Google Drive, creating the necessary 
+    configuration files.
     
     Examples:
         invoice-automation setup --provider meta
+        invoice-automation setup --provider google-drive
         invoice-automation setup --interactive
     """
     if interactive:
@@ -173,7 +180,7 @@ def _run_interactive_setup(provider: str) -> None:
         console.print("[bold]Google Ads Configuration[/bold]")
         console.print("You'll need Google Ads API credentials and OAuth2 setup.")
         console.print("Visit https://developers.google.com/google-ads/api/ for setup instructions.\n")
-        console.print("[yellow]Tip: Use 'invoice-automation generate-tokens' to get OAuth2 credentials![/yellow]\n")
+        console.print("[yellow]Tip: Use 'invoice-automation generate-tokens --provider google' to get OAuth2 credentials![/yellow]\n")
         
         customer_id = typer.prompt("Google Ads Customer ID")
         client_id = typer.prompt("OAuth2 Client ID")
@@ -191,6 +198,30 @@ def _run_interactive_setup(provider: str) -> None:
             "",
         ])
     
+    if provider in ["google-drive", "both"]:
+        console.print("[bold]Google Drive Configuration[/bold]")
+        console.print("You'll need Google Drive API access and OAuth2 setup.")
+        console.print("[yellow]Tip: Use 'invoice-automation generate-tokens --provider google-drive' to get OAuth2 credentials![/yellow]\n")
+        
+        enable_drive = typer.confirm("Enable Google Drive uploads?", default=True)
+        
+        if enable_drive:
+            client_id = typer.prompt("OAuth2 Client ID")
+            client_secret = typer.prompt("OAuth2 Client Secret", hide_input=True)
+            refresh_token = typer.prompt("OAuth2 Refresh Token", hide_input=True)
+            folder_structure = typer.prompt("Folder structure", default="client")
+            
+            config_lines.extend([
+                "# Google Drive Configuration",
+                "GOOGLE_DRIVE_ENABLED=true",
+                f"GOOGLE_DRIVE_CLIENT_ID={client_id}",
+                f"GOOGLE_DRIVE_CLIENT_SECRET={client_secret}",
+                f"GOOGLE_DRIVE_REFRESH_TOKEN={refresh_token}",
+                f"GOOGLE_DRIVE_FOLDER_STRUCTURE={folder_structure}",
+                "GOOGLE_DRIVE_OVERWRITE_EXISTING=false",
+                "",
+            ])
+    
     # Write configuration file
     try:
         with open(env_path, "w") as f:
@@ -200,6 +231,8 @@ def _run_interactive_setup(provider: str) -> None:
         console.print("\nNext steps:")
         console.print("1. Run 'invoice-automation status' to test your configuration")
         console.print("2. Run 'invoice-automation fetch' to retrieve invoices")
+        if provider in ["google-drive", "both"]:
+            console.print("3. Run 'invoice-automation upload --dry-run' to test Google Drive upload")
         
     except Exception as e:
         console.print(f"[red]Failed to save configuration: {e}[/red]")
@@ -235,13 +268,27 @@ def _display_setup_instructions(provider: str) -> None:
         console.print("• GOOGLE_REFRESH_TOKEN: OAuth2 refresh token")
         console.print("• GOOGLE_DEVELOPER_TOKEN: Google Ads developer token")
         console.print("• Setup guide: https://developers.google.com/google-ads/api/")
-        console.print("• [cyan]Use 'invoice-automation generate-tokens' for OAuth2 setup![/cyan]\n")
+        console.print("• [cyan]Use 'invoice-automation generate-tokens --provider google' for OAuth2 setup![/cyan]\n")
+    
+    if provider in ["google-drive", "both"]:
+        console.print("[bold]Google Drive Credentials:[/bold]")
+        console.print("• GOOGLE_DRIVE_ENABLED: Set to 'true' to enable uploads")
+        console.print("• GOOGLE_DRIVE_CLIENT_ID: OAuth2 client ID")
+        console.print("• GOOGLE_DRIVE_CLIENT_SECRET: OAuth2 client secret")
+        console.print("• GOOGLE_DRIVE_REFRESH_TOKEN: OAuth2 refresh token")
+        console.print("• GOOGLE_DRIVE_FOLDER_STRUCTURE: Organization method (client, date, provider, flat)")
+        console.print("• Setup guide: https://developers.google.com/drive/api/")
+        console.print("• [cyan]Use 'invoice-automation generate-tokens --provider google-drive' for OAuth2 setup![/cyan]\n")
     
     console.print("3. Test your configuration:")
     console.print("   [cyan]invoice-automation status[/cyan]\n")
     
     console.print("4. Fetch invoices:")
-    console.print("   [cyan]invoice-automation fetch[/cyan]")
+    console.print("   [cyan]invoice-automation fetch[/cyan]\n")
+    
+    if provider in ["google-drive", "both"]:
+        console.print("5. Upload to Google Drive:")
+        console.print("   [cyan]invoice-automation upload --dry-run[/cyan]")
 
 
 def handle_exception(exc_type: Any, exc_value: Any, exc_traceback: Any) -> None:
