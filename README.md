@@ -1,6 +1,11 @@
 # Invoice Automation CLI
 
+[![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A professional-grade Python CLI application for automatically retrieving, downloading, organizing, and uploading invoices from Google Ads and Meta Ads (Facebook) APIs with Google Drive integration.
+
+![Invoice Automation CLI Screenshot](docs/terminal-screenshot.png)
 
 ## Features
 
