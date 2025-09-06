@@ -119,6 +119,63 @@ class GoogleAdsConfig(BaseModel):
         return v
 
 
+class GoogleDriveConfig(BaseModel):
+    """
+    Configuration for Google Drive API integration.
+    
+    Contains OAuth2 credentials and settings for uploading files
+    to Google Drive with configurable organization.
+    """
+
+    client_id: str = Field(..., description="OAuth2 client ID")
+    client_secret: str = Field(..., description="OAuth2 client secret")
+    refresh_token: str = Field(..., description="OAuth2 refresh token")
+    folder_id: Optional[str] = Field(default=None, description="Base folder ID for uploads")
+    folder_structure: str = Field(default="client", description="Folder organization method")
+    overwrite_existing: bool = Field(default=False, description="Whether to overwrite existing files")
+    share_permissions: str = Field(default="none", description="Default sharing permissions")
+
+    @field_validator("folder_structure")
+    @classmethod
+    def validate_folder_structure(cls, v: str) -> str:
+        """
+        Validate folder structure setting.
+
+        Args:
+            v: Folder structure to validate
+
+        Returns:
+            Validated folder structure
+
+        Raises:
+            ValueError: If folder structure is invalid
+        """
+        valid_structures = {"date", "client", "provider", "flat"}
+        if v not in valid_structures:
+            raise ValueError(f"Folder structure must be one of: {', '.join(valid_structures)}")
+        return v
+
+    @field_validator("share_permissions")
+    @classmethod
+    def validate_share_permissions(cls, v: str) -> str:
+        """
+        Validate share permissions setting.
+
+        Args:
+            v: Share permissions to validate
+
+        Returns:
+            Validated share permissions
+
+        Raises:
+            ValueError: If share permissions is invalid
+        """
+        valid_permissions = {"none", "view", "edit"}
+        if v not in valid_permissions:
+            raise ValueError(f"Share permissions must be one of: {', '.join(valid_permissions)}")
+        return v
+
+
 class RetryConfig(BaseModel):
     """
     Configuration for retry behavior and error handling.
@@ -144,6 +201,7 @@ class ApplicationConfig(BaseModel):
 
     meta: Optional[MetaAdsConfig] = Field(default=None, description="Meta Ads configuration")
     google: Optional[GoogleAdsConfig] = Field(default=None, description="Google Ads configuration")
+    google_drive: Optional[GoogleDriveConfig] = Field(default=None, description="Google Drive configuration")
     retry: RetryConfig = Field(default_factory=RetryConfig, description="Retry configuration")
     output_dir: Path = Field(default=Path("./invoices"), description="Output directory for invoices")
     log_level: str = Field(default="INFO", description="Logging level")
@@ -201,6 +259,15 @@ class ApplicationConfig(BaseModel):
         """
         return self.google is not None
 
+    def has_google_drive_config(self) -> bool:
+        """
+        Check if Google Drive configuration is available.
+
+        Returns:
+            True if Google Drive configuration is complete
+        """
+        return self.google_drive is not None
+
     def get_enabled_providers(self) -> list[str]:
         """
         Get list of enabled providers based on configuration.
@@ -213,4 +280,16 @@ class ApplicationConfig(BaseModel):
             providers.append("meta")
         if self.has_google_config():
             providers.append("google")
+        return providers
+
+    def get_enabled_upload_providers(self) -> list[str]:
+        """
+        Get list of enabled upload providers based on configuration.
+
+        Returns:
+            List of upload provider names ("google-drive") that are configured
+        """
+        providers = []
+        if self.has_google_drive_config():
+            providers.append("google-drive")
         return providers

@@ -15,7 +15,7 @@ from typing import Optional, Union
 from dotenv import load_dotenv
 from pydantic import ValidationError
 
-from ..models.config import ApplicationConfig, GoogleAdsConfig, MetaAdsConfig, RetryConfig
+from ..models.config import ApplicationConfig, GoogleAdsConfig, GoogleDriveConfig, MetaAdsConfig, RetryConfig
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +115,45 @@ class Settings:
             logger.error(f"Invalid Google Ads configuration: {e}")
             raise ConfigurationError(f"Invalid Google Ads configuration: {e}") from e
 
+    def _load_google_drive_config(self) -> Optional[GoogleDriveConfig]:
+        """
+        Load Google Drive configuration from environment variables.
+
+        Returns:
+            GoogleDriveConfig if all required variables are present, None otherwise
+        """
+        enabled = os.getenv("GOOGLE_DRIVE_ENABLED", "false").lower() in ("true", "1", "yes", "on")
+        
+        if not enabled:
+            logger.debug("Google Drive disabled or not configured")
+            return None
+
+        client_id = os.getenv("GOOGLE_DRIVE_CLIENT_ID") or os.getenv("GOOGLE_CLIENT_ID")
+        client_secret = os.getenv("GOOGLE_DRIVE_CLIENT_SECRET") or os.getenv("GOOGLE_CLIENT_SECRET")
+        refresh_token = os.getenv("GOOGLE_DRIVE_REFRESH_TOKEN") or os.getenv("GOOGLE_REFRESH_TOKEN")
+        folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
+        folder_structure = os.getenv("GOOGLE_DRIVE_FOLDER_STRUCTURE", "client")
+        overwrite_existing = os.getenv("GOOGLE_DRIVE_OVERWRITE_EXISTING", "false").lower() in ("true", "1", "yes", "on")
+        share_permissions = os.getenv("GOOGLE_DRIVE_SHARE_PERMISSIONS", "none")
+
+        if not all([client_id, client_secret, refresh_token]):
+            logger.debug("Google Drive configuration incomplete")
+            return None
+
+        try:
+            return GoogleDriveConfig(
+                client_id=client_id,  # type: ignore
+                client_secret=client_secret,  # type: ignore
+                refresh_token=refresh_token,  # type: ignore
+                folder_id=folder_id,
+                folder_structure=folder_structure,
+                overwrite_existing=overwrite_existing,
+                share_permissions=share_permissions,
+            )
+        except ValidationError as e:
+            logger.error(f"Invalid Google Drive configuration: {e}")
+            raise ConfigurationError(f"Invalid Google Drive configuration: {e}") from e
+
     def _load_retry_config(self) -> RetryConfig:
         """
         Load retry configuration from environment variables.
@@ -153,21 +192,29 @@ class Settings:
             self._config = ApplicationConfig(
                 meta=self._load_meta_config(),
                 google=self._load_google_config(),
+                google_drive=self._load_google_drive_config(),
                 retry=self._load_retry_config(),
                 output_dir=output_dir,
                 log_level=log_level,
                 debug=debug,
             )
 
-            # Validate that at least one provider is configured
-            if not self._config.has_meta_config() and not self._config.has_google_config():
+            # Validate that at least one provider is configured for invoice fetching
+            invoice_providers = self._config.get_enabled_providers()
+            upload_providers = self._config.get_enabled_upload_providers()
+            
+            if not invoice_providers and not upload_providers:
                 raise ConfigurationError(
-                    "No providers configured. Please set up Meta Ads or Google Ads credentials."
+                    "No providers configured. Please set up Meta Ads, Google Ads, or Google Drive credentials."
                 )
 
-            logger.debug(
-                f"Configuration loaded successfully. Enabled providers: {self._config.get_enabled_providers()}"
-            )
+            enabled_services = []
+            if invoice_providers:
+                enabled_services.append(f"Invoice providers: {', '.join(invoice_providers)}")
+            if upload_providers:
+                enabled_services.append(f"Upload providers: {', '.join(upload_providers)}")
+
+            logger.debug(f"Configuration loaded successfully. {', '.join(enabled_services)}")
             return self._config
 
         except ValidationError as e:
@@ -193,7 +240,7 @@ class Settings:
         Validate that a specific provider is properly configured.
 
         Args:
-            provider: Provider name ("meta" or "google")
+            provider: Provider name ("meta", "google", or "google-drive")
 
         Returns:
             True if provider is properly configured
@@ -211,15 +258,19 @@ class Settings:
             if not config.has_google_config():
                 raise ConfigurationError("Google Ads configuration not found")
             return True
+        elif provider == "google-drive":
+            if not config.has_google_drive_config():
+                raise ConfigurationError("Google Drive configuration not found")
+            return True
         else:
             raise ConfigurationError(f"Unknown provider: {provider}")
 
-    def get_provider_config(self, provider: str) -> Union[MetaAdsConfig, GoogleAdsConfig]:
+    def get_provider_config(self, provider: str) -> Union[MetaAdsConfig, GoogleAdsConfig, GoogleDriveConfig]:
         """
         Get configuration for a specific provider.
 
         Args:
-            provider: Provider name ("meta" or "google")
+            provider: Provider name ("meta", "google", or "google-drive")
 
         Returns:
             Provider-specific configuration
@@ -237,6 +288,10 @@ class Settings:
             if config.google is None:
                 raise ConfigurationError("Google Ads configuration not found")
             return config.google
+        elif provider == "google-drive":
+            if config.google_drive is None:
+                raise ConfigurationError("Google Drive configuration not found")
+            return config.google_drive
         else:
             raise ConfigurationError(f"Unknown provider: {provider}")
 

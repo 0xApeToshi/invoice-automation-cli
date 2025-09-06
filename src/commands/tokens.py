@@ -3,7 +3,7 @@
 Token generation command for Google OAuth2 credentials.
 
 This module implements the tokens command that helps users generate
-the required OAuth2 credentials for Google Ads API integration.
+the required OAuth2 credentials for Google Ads API and Google Drive integration.
 """
 
 import glob
@@ -34,7 +34,7 @@ def tokens_command(
         "google",
         "--provider",
         "-p",
-        help="Provider to generate tokens for (currently only 'google')",
+        help="Provider to generate tokens for: google, google-drive, or both",
     ),
     no_validation: bool = typer.Option(
         False,
@@ -51,17 +51,20 @@ def tokens_command(
     Generate OAuth2 tokens for API authentication.
     
     This command helps you generate the required OAuth2 credentials for
-    Google Ads API integration. It will open a browser window for authentication
-    and provide you with the tokens needed for your .env file.
+    Google Ads API and/or Google Drive integration. It will open a browser 
+    window for authentication and provide you with the tokens needed for 
+    your .env file.
     
     Prerequisites for Google:
     1. Create a project in Google Cloud Console
-    2. Enable the Google Ads API
+    2. Enable the Google Ads API and/or Google Drive API
     3. Create OAuth 2.0 Client ID credentials (Desktop Application)
     4. Download the client_secret.json file
     
     Examples:
-        invoice-automation generate-tokens --secrets-file client_secret.json
+        invoice-automation generate-tokens --provider google
+        invoice-automation generate-tokens --provider google-drive
+        invoice-automation generate-tokens --provider both
         invoice-automation generate-tokens -s /path/to/client_secret.json --debug
     """
     try:
@@ -73,8 +76,9 @@ def tokens_command(
         )
         
         # Validate provider
-        if provider != "google":
-            console.print(f"[red]Error: Provider '{provider}' not supported. Currently only 'google' is available.[/red]")
+        valid_providers = {"google", "google-drive", "both"}
+        if provider not in valid_providers:
+            console.print(f"[red]Error: Provider '{provider}' not supported. Must be one of: {', '.join(valid_providers)}[/red]")
             raise typer.Exit(1)
         
         # Display introduction
@@ -85,11 +89,11 @@ def tokens_command(
         
         # Generate tokens
         client_id, client_secret, refresh_token = _generate_google_tokens(
-            secrets_path, no_validation
+            secrets_path, provider, no_validation
         )
         
         # Display results
-        _display_token_results(client_id, client_secret, refresh_token)
+        _display_token_results(client_id, client_secret, refresh_token, provider)
         
     except KeyboardInterrupt:
         console.print("\n[yellow]Operation cancelled by user[/yellow]")
@@ -107,22 +111,37 @@ def _display_introduction(provider: str) -> None:
     Args:
         provider: The provider for which tokens are being generated
     """
-    intro_text = f"""[bold blue]OAuth2 Token Generator for {provider.title()}[/bold blue]
+    services = []
+    apis_needed = []
+    
+    if provider in ["google", "both"]:
+        services.append("Google Ads API")
+        apis_needed.append("Google Ads API")
+    
+    if provider in ["google-drive", "both"]:
+        services.append("Google Drive API")
+        apis_needed.append("Google Drive API")
+    
+    services_text = " and ".join(services)
+    apis_text = " and ".join(apis_needed)
+    
+    intro_text = f"""[bold blue]OAuth2 Token Generator for {services_text}[/bold blue]
 
 This command will help you generate the OAuth2 credentials needed for
-{provider.title()} Ads API integration.
+{services_text} integration.
 
 [bold]What you'll need:[/bold]
-• Google Cloud Console project with Google Ads API enabled
+• Google Cloud Console project with {apis_text} enabled
 • OAuth 2.0 Client ID credentials (Desktop Application type)
 • The client_secret.json file downloaded from Google Cloud Console
 
 [bold]What this will do:[/bold]
 • Open a browser window for Google authentication
+• Request appropriate permissions for selected services
 • Generate your OAuth2 refresh token
 • Provide credentials ready for your .env file
 
-[yellow]Make sure you sign in with the Google account that has access to your Google Ads account![/yellow]"""
+[yellow]Make sure you sign in with the Google account that has access to your services![/yellow]"""
 
     console.print(Panel(intro_text, title="Token Generation"))
 
@@ -215,6 +234,7 @@ def _get_secrets_file_path(secrets_file: Optional[str]) -> Path:
 
 def _generate_google_tokens(
     secrets_path: Path, 
+    provider: str,
     no_validation: bool
 ) -> Tuple[str, str, str]:
     """
@@ -222,6 +242,7 @@ def _generate_google_tokens(
     
     Args:
         secrets_path: Path to the client secrets JSON file
+        provider: Provider type to determine scopes
         no_validation: Whether to skip token validation
         
     Returns:
@@ -232,7 +253,7 @@ def _generate_google_tokens(
         Exception: If OAuth flow fails
     """
     try:
-        from google_auth_oauthlib.flow import InstalledAppFlow # type: ignore
+        from google_auth_oauthlib.flow import InstalledAppFlow  # type: ignore
         from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
     except ImportError:
@@ -240,10 +261,18 @@ def _generate_google_tokens(
         console.print("Please install them with: [cyan]pip install google-auth-oauthlib[/cyan]")
         raise typer.Exit(1)
     
-    # Google Ads API scopes
-    scopes = ["https://www.googleapis.com/auth/adwords"]
+    # Determine scopes based on provider
+    scopes = []
+    if provider in ["google", "both"]:
+        scopes.append("https://www.googleapis.com/auth/adwords")
     
-    console.print("\n[bold]Starting OAuth2 flow...[/bold]")
+    if provider in ["google-drive", "both"]:
+        scopes.extend([
+            "https://www.googleapis.com/auth/drive.file",
+            "https://www.googleapis.com/auth/drive.metadata"
+        ])
+    
+    console.print(f"\n[bold]Starting OAuth2 flow for: {', '.join(scopes)}[/bold]")
     console.print("A browser window will open for authentication.")
     
     try:
@@ -280,7 +309,7 @@ def _generate_google_tokens(
             
             try:
                 # Create credentials object and test refresh
-                test_credentials = Credentials( # type: ignore
+                test_credentials = Credentials(  # type: ignore
                     token=None,
                     refresh_token=refresh_token,
                     client_id=client_id,
@@ -289,7 +318,7 @@ def _generate_google_tokens(
                     scopes=scopes
                 )
                 
-                request = Request() # type: ignore
+                request = Request()  # type: ignore
                 test_credentials.refresh(request)
                 console.print("[green]✓ Token validation successful[/green]")
                 
@@ -304,7 +333,7 @@ def _generate_google_tokens(
         raise
 
 
-def _display_token_results(client_id: str, client_secret: str, refresh_token: str) -> None:
+def _display_token_results(client_id: str, client_secret: str, refresh_token: str, provider: str) -> None:
     """
     Display the generated tokens in a format ready for .env file.
     
@@ -312,16 +341,48 @@ def _display_token_results(client_id: str, client_secret: str, refresh_token: st
         client_id: OAuth2 client ID
         client_secret: OAuth2 client secret
         refresh_token: OAuth2 refresh token
+        provider: Provider type that was configured
     """
-    # Create the .env content
-    env_content = f"""# Google Ads OAuth2 Configuration (generated by invoice-automation)
-GOOGLE_CLIENT_ID={client_id}
-GOOGLE_CLIENT_SECRET={client_secret}
-GOOGLE_REFRESH_TOKEN={refresh_token}
-
-# Still needed (get these separately):
-# GOOGLE_CUSTOMER_ID=your_google_ads_customer_id
-# GOOGLE_DEVELOPER_TOKEN=your_google_ads_developer_token"""
+    # Create the .env content based on provider
+    env_content_lines = ["# Google OAuth2 Configuration (generated by invoice-automation)"]
+    
+    if provider in ["google", "both"]:
+        env_content_lines.extend([
+            "",
+            "# Google Ads API Configuration",
+            f"GOOGLE_CLIENT_ID={client_id}",
+            f"GOOGLE_CLIENT_SECRET={client_secret}",
+            f"GOOGLE_REFRESH_TOKEN={refresh_token}",
+            "",
+            "# Still needed for Google Ads (get these separately):",
+            "# GOOGLE_CUSTOMER_ID=your_google_ads_customer_id",
+            "# GOOGLE_DEVELOPER_TOKEN=your_google_ads_developer_token"
+        ])
+    
+    if provider in ["google-drive", "both"]:
+        env_content_lines.extend([
+            "",
+            "# Google Drive Configuration",
+            "GOOGLE_DRIVE_ENABLED=true",
+            f"GOOGLE_DRIVE_CLIENT_ID={client_id}",
+            f"GOOGLE_DRIVE_CLIENT_SECRET={client_secret}",
+            f"GOOGLE_DRIVE_REFRESH_TOKEN={refresh_token}",
+            "",
+            "# Optional Google Drive settings:",
+            "# GOOGLE_DRIVE_FOLDER_ID=your_specific_folder_id",
+            "# GOOGLE_DRIVE_FOLDER_STRUCTURE=client  # date, client, provider, flat",
+            "# GOOGLE_DRIVE_OVERWRITE_EXISTING=false",
+            "# GOOGLE_DRIVE_SHARE_PERMISSIONS=none  # none, view, edit"
+        ])
+    
+    if provider == "both":
+        env_content_lines.extend([
+            "",
+            "# Note: Same OAuth2 credentials work for both Google Ads and Google Drive",
+            "# You can also use the GOOGLE_* variables for Drive if you prefer:"
+        ])
+    
+    env_content = "\n".join(env_content_lines)
 
     results_text = f"""[bold green]SUCCESS! Your Google OAuth2 credentials have been generated.[/bold green]
 
@@ -330,14 +391,21 @@ GOOGLE_REFRESH_TOKEN={refresh_token}
 • Client Secret: {client_secret[:10]}...
 • Refresh Token: {refresh_token[:20]}...
 
-[bold]Next Steps:[/bold]
-1. Add these credentials to your .env file (see below)
-2. Get your Google Ads Customer ID from https://ads.google.com
-3. Apply for Google Ads API access to get your Developer Token
-4. Run 'invoice-automation status' to test your configuration
+[bold]Provider Configured:[/bold] {provider}
 
-[bold]Add to your .env file:[/bold]
-{env_content}"""
+[bold]Next Steps:[/bold]
+1. Add these credentials to your .env file (see below)"""
+    
+    if provider in ["google", "both"]:
+        results_text += "\n2. Get your Google Ads Customer ID from https://ads.google.com"
+        results_text += "\n3. Apply for Google Ads API access to get your Developer Token"
+    
+    if provider in ["google-drive", "both"]:
+        results_text += "\n4. Test Google Drive upload with 'invoice-automation upload --dry-run'"
+    
+    results_text += "\n5. Run 'invoice-automation status' to test your configuration"
+
+    results_text += f"\n\n[bold]Add to your .env file:[/bold]\n{env_content}"
 
     console.print(Panel(results_text, title="Token Generation Complete"))
     
