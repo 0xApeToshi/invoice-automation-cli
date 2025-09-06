@@ -17,6 +17,7 @@ from rich.traceback import install
 
 from .commands.fetch import fetch_command
 from .commands.status import status_command
+from .commands.tokens import tokens_command
 
 # Install rich traceback handler for better error display
 install(show_locals=True)
@@ -35,6 +36,7 @@ app = typer.Typer(
 # Register commands
 app.command("fetch", help="Fetch invoices from configured providers")(fetch_command)
 app.command("status", help="Check provider configuration and API connections")(status_command)
+app.command("generate-tokens", help="Generate OAuth2 tokens for API authentication")(tokens_command)
 
 
 def version_callback(value: bool) -> None:
@@ -171,6 +173,7 @@ def _run_interactive_setup(provider: str) -> None:
         console.print("[bold]Google Ads Configuration[/bold]")
         console.print("You'll need Google Ads API credentials and OAuth2 setup.")
         console.print("Visit https://developers.google.com/google-ads/api/ for setup instructions.\n")
+        console.print("[yellow]Tip: Use 'invoice-automation generate-tokens' to get OAuth2 credentials![/yellow]\n")
         
         customer_id = typer.prompt("Google Ads Customer ID")
         client_id = typer.prompt("OAuth2 Client ID")
@@ -231,7 +234,8 @@ def _display_setup_instructions(provider: str) -> None:
         console.print("• GOOGLE_CLIENT_SECRET: OAuth2 client secret")
         console.print("• GOOGLE_REFRESH_TOKEN: OAuth2 refresh token")
         console.print("• GOOGLE_DEVELOPER_TOKEN: Google Ads developer token")
-        console.print("• Setup guide: https://developers.google.com/google-ads/api/\n")
+        console.print("• Setup guide: https://developers.google.com/google-ads/api/")
+        console.print("• [cyan]Use 'invoice-automation generate-tokens' for OAuth2 setup![/cyan]\n")
     
     console.print("3. Test your configuration:")
     console.print("   [cyan]invoice-automation status[/cyan]\n")
